@@ -5,7 +5,6 @@
 package dbx
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -204,9 +203,38 @@ func (b *BaseBuilder) Insert(table string, cols Params) *Query {
 // The keys of cols are the column names, while the values of cols are the corresponding column
 // values to be inserted.
 func (b *BaseBuilder) Upsert(table string, cols Params, constraints ...string) *Query {
-	q := b.NewQuery("")
-	q.LastError = errors.New("Upsert is not supported")
-	return q
+	names := make([]string, 0, len(cols))
+	for name := range cols {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	params := Params{}
+	columns := make([]string, 0, len(names))
+	values := make([]string, 0, len(names))
+	for _, name := range names {
+		columns = append(columns, b.db.QuoteColumnName(name))
+		value := cols[name]
+		if e, ok := value.(Expression); ok {
+			values = append(values, e.Build(b.db, params))
+		} else {
+			values = append(values, fmt.Sprintf("{:p%v}", len(params)))
+			params[fmt.Sprintf("p%v", len(params))] = value
+		}
+	}
+
+	var sql string
+	if len(names) == 0 {
+		sql = fmt.Sprintf("REPLACE INTO %v DEFAULT VALUES", b.db.QuoteTableName(table))
+	} else {
+		sql = fmt.Sprintf("REPLACE INTO %v (%v) VALUES (%v)",
+			b.db.QuoteTableName(table),
+			strings.Join(columns, ", "),
+			strings.Join(values, ", "),
+		)
+	}
+
+	return b.NewQuery(sql).Bind(params)
 }
 
 // Update creates a Query that represents an UPDATE SQL statement.
